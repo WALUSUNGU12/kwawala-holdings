@@ -1,0 +1,305 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Box,
+  Button,
+  Container,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  IconButton,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Snackbar,
+  Alert,
+  CircularProgress,
+  TablePagination,
+  Chip
+} from '@mui/material';
+import { Add as AddIcon, Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import { format } from 'date-fns';
+import Dashboard from '../components/Dashboard';
+import ProjectForm from '../components/ProjectForm';
+import { useGetProjectsQuery, useDeleteProjectMutation } from '../features/projects/projectsApi';
+import { Project } from '../types';
+
+type ProjectStatus = 'all' | 'active' | 'completed' | 'on_hold' | 'cancelled';
+
+const ProjectsPage: React.FC = () => {
+  const navigate = useNavigate();
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success' as 'success' | 'error' | 'info' | 'warning'
+  });
+
+  // Fetch projects
+  const { data: projects = [], isLoading, isError, refetch } = useGetProjectsQuery();
+  const [deleteProject, { isLoading: isDeleting }] = useDeleteProjectMutation();
+
+  // Handle delete project
+  const handleDeleteClick = (project: Project) => {
+    setSelectedProject(project);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!selectedProject) return;
+    
+    try {
+      await deleteProject(selectedProject.id).unwrap();
+      setSnackbar({
+        open: true,
+        message: 'Project deleted successfully',
+        severity: 'success'
+      });
+      refetch();
+    } catch (error) {
+      console.error('Failed to delete project:', error);
+      setSnackbar({
+        open: true,
+        message: 'Failed to delete project',
+        severity: 'error'
+      });
+    } finally {
+      setDeleteDialogOpen(false);
+      setSelectedProject(null);
+    }
+  };
+
+  // Handle form submission
+  const handleFormSubmit = () => {
+    setIsAddDialogOpen(false);
+    setIsEditDialogOpen(false);
+    refetch();
+    setSnackbar({
+      open: true,
+      message: `Project ${selectedProject ? 'updated' : 'created'} successfully`,
+      severity: 'success'
+    });
+  };
+
+  // Handle pagination
+  const handleChangePage = (event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
+  // Get status color
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active': return 'success';
+      case 'completed': return 'primary';
+      case 'on_hold': return 'warning';
+      case 'cancelled': return 'error';
+      default: return 'default';
+    }
+  };
+
+  // Format date
+  const formatDate = (dateString: string) => {
+    try {
+      return format(new Date(dateString), 'MMM dd, yyyy');
+    } catch (error) {
+      return 'Invalid date';
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <Dashboard>
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+          <CircularProgress />
+        </Box>
+      </Dashboard>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Dashboard>
+        <Alert severity="error" sx={{ m: 2 }}>
+          Error loading projects. Please try again later.
+        </Alert>
+      </Dashboard>
+    );
+  }
+
+  return (
+    <Dashboard>
+      <Container maxWidth="xl" sx={{ py: 4 }}>
+        {/* Add/Edit Project Dialog */}
+        <ProjectForm
+          open={isAddDialogOpen || isEditDialogOpen}
+          onClose={() => {
+            setIsAddDialogOpen(false);
+            setIsEditDialogOpen(false);
+            setSelectedProject(null);
+          }}
+          project={selectedProject}
+          onSuccess={handleFormSubmit}
+        />
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog
+          open={deleteDialogOpen}
+          onClose={() => setDeleteDialogOpen(false)}
+          aria-labelledby="delete-dialog-title"
+        >
+          <DialogTitle id="delete-dialog-title">
+            Delete Project
+          </DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              Are you sure you want to delete the project "{selectedProject?.name}"?
+              This action cannot be undone.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeleteDialogOpen(false)} color="primary">
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleDeleteConfirm} 
+              color="error"
+              variant="contained"
+              disabled={isDeleting}
+              startIcon={isDeleting ? <CircularProgress size={20} /> : null}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Success/Error Snackbar */}
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={6000}
+          onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+        >
+          <Alert 
+            onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+            severity={snackbar.severity}
+            sx={{ width: '100%' }}
+          >
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
+
+        {/* Page Header */}
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={4}>
+          <Typography variant="h4" component="h1">
+            Projects
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={() => {
+              setSelectedProject(null);
+              setIsAddDialogOpen(true);
+            }}
+          >
+            Add Project
+          </Button>
+        </Box>
+
+        {/* Projects Table */}
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Start Date</TableCell>
+                <TableCell>End Date</TableCell>
+                <TableCell>Budget</TableCell>
+                <TableCell align="right">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {projects.length > 0 ? (
+                projects
+                  .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+                  .map((project) => (
+                    <TableRow key={project.id}>
+                      <TableCell>{project.name}</TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={project.status.replace('_', ' ')}
+                          color={getStatusColor(project.status) as any}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>{formatDate(project.startDate)}</TableCell>
+                      <TableCell>{project.endDate ? formatDate(project.endDate) : '-'}</TableCell>
+                      <TableCell>
+                        {project.budget ? `$${project.budget.toLocaleString()}` : '-'}
+                      </TableCell>
+                      <TableCell align="right">
+                        <IconButton
+                          onClick={() => {
+                            setSelectedProject(project);
+                            setIsEditDialogOpen(true);
+                          }}
+                          color="primary"
+                        >
+                          <EditIcon />
+                        </IconButton>
+                        <IconButton
+                          onClick={() => handleDeleteClick(project)}
+                          color="error"
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                    <Typography variant="body1" color="textSecondary">
+                      No projects found. Click "Add Project" to get started.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+          
+          {projects.length > 0 && (
+            <TablePagination
+              rowsPerPageOptions={[5, 10, 25]}
+              component="div"
+              count={projects.length}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={handleChangePage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+            />
+          )}
+        </TableContainer>
+      </Container>
+    </Dashboard>
+  );
+};
+
+export default ProjectsPage;

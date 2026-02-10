@@ -1,0 +1,395 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useFormik, FormikHelpers } from 'formik';
+import * as Yup from 'yup';
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  CircularProgress,
+  Divider,
+  FormControl,
+  FormHelperText,
+  Grid,
+  InputAdornment,
+  InputLabel,
+  MenuItem,
+  Select,
+  TextField,
+  Typography,
+} from '@mui/material';
+import PendingActionsIcon from '@mui/icons-material/PendingActions';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import { LocalizationProvider } from '@mui/x-date-pickers';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { 
+  useCreateExpenseMutation, 
+  useUpdateExpenseMutation, 
+  useGetExpenseByIdQuery,
+  ExpensePayload,
+  ExpenseFormValues,
+  Project,
+  RootState,
+  AuthUser
+} from '../features/expenses/expenseTypes';
+import { useGetProjectsQuery } from '../features/projects/projectsApi';
+
+// Simple implementation of useAppSelector if not available
+const useAppSelector = <T,>(selector: (state: RootState) => T): T => {
+  // In a real app, this would come from Redux
+  return {} as T;
+};
+
+// Categories for the expense form
+const categories = [
+  { value: 'office', label: 'Office Supplies' },
+  { value: 'travel', label: 'Travel' },
+  { value: 'utilities', label: 'Utilities' },
+  { value: 'equipment', label: 'Equipment' },
+  { value: 'other', label: 'Other' },
+];
+
+interface ExpenseFormProps {
+  // Add any props you need here
+}
+
+const ExpenseForm: React.FC<ExpenseFormProps> = () => {
+  const navigate = useNavigate();
+  const { id } = useParams<{ id?: string }>();
+  const { user } = useAppSelector((state) => state.auth);
+  const isEditMode = Boolean(id);
+  const isAdmin = user?.role === 'admin';
+
+  // Get projectId from query params for new expenses
+  const [searchParams] = useSearchParams();
+  const defaultProjectId = searchParams.get('projectId') || '';
+
+  // API Hooks
+  const [createExpense] = useCreateExpenseMutation();
+  const [updateExpense] = useUpdateExpenseMutation();
+  const { 
+    data: existingExpense, 
+    isLoading: isLoadingExpense,
+    isError: isExpenseError
+  } = useGetExpenseByIdQuery(id || '', { skip: !id });
+  
+  const { data: projects = [] } = useGetProjectsQuery();
+  
+  // Loading state for the form
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Handle form submission
+  const handleSubmit = async (
+    values: ExpenseFormValues, 
+    { setSubmitting }: FormikHelpers<ExpenseFormValues>
+  ) => {
+    try {
+      setIsSubmitting(true);
+      const expenseData: ExpensePayload = {
+        projectId: values.projectId,
+        description: values.description,
+        amount: values.amount,
+        date: values.date instanceof Date ? values.date.toISOString() : values.date,
+        category: values.category,
+        status: values.status,
+        receiptUrl: values.receiptUrl || ''
+      };
+
+      if (isEditMode && id) {
+        await updateExpense({ 
+          id, 
+          body: expenseData 
+        }).unwrap();
+      } else {
+        await createExpense(expenseData).unwrap();
+      }
+
+      navigate('/expenses');
+    } catch (error) {
+      console.error('Failed to save expense:', error);
+      // In a real app, you'd show this error to the user
+    } finally {
+      setSubmitting(false);
+      setIsSubmitting(false);
+    }
+  };
+
+  // Formik initialization
+  const formik = useFormik<ExpenseFormValues>({
+    initialValues: {
+      projectId: defaultProjectId,
+      date: new Date(),
+      description: '',
+      amount: '',
+      category: 'office',
+      status: 'pending',
+      receiptUrl: ''
+    },
+    validationSchema: Yup.object({
+      projectId: Yup.string().required('Project is required'),
+      date: Yup.date()
+        .required('Expense date is required')
+        .max(new Date(), 'Expense date cannot be in the future'),
+      description: Yup.string()
+        .required('Description is required')
+        .max(500, 'Description is too long (max 500 characters)'),
+      amount: Yup.string()
+        .required('Amount is required')
+        .matches(/^\d+(\.\d{1,2})?$/, 'Enter a valid amount'),
+      category: Yup.string().required('Category is required'),
+      status: Yup.string()
+        .oneOf(['pending', 'approved', 'rejected'] as const)
+        .required('Status is required'),
+      receiptUrl: Yup.string().url('Must be a valid URL').nullable(),
+    }),
+    onSubmit: handleSubmit,
+    enableReinitialize: true,
+  });
+
+  // Set initial values when editing
+  useEffect(() => {
+    if (existingExpense) {
+      formik.setValues({
+        projectId: existingExpense.projectId,
+        date: existingExpense.date ? new Date(existingExpense.date) : new Date(),
+        description: existingExpense.description || '',
+        amount: existingExpense.amount,
+        category: existingExpense.category,
+        status: existingExpense.status,
+        receiptUrl: existingExpense.receiptUrl || ''
+      });
+    }
+  }, [existingExpense]);
+
+  const handleCancel = () => navigate(-1);
+
+  // Loading state
+  if (isLoadingExpense) {
+    return (
+      <Box display="flex" justifyContent="center" p={3}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  // Error state
+  if (isExpenseError) {
+    return (
+      <Box p={3}>
+        <Typography color="error">
+          Error loading expense data. Please try again.
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
+      <form onSubmit={formik.handleSubmit} noValidate>
+        <Card>
+          <CardHeader
+            title={isEditMode ? 'Edit Expense' : 'New Expense'}
+            titleTypographyProps={{ variant: 'h6' }}
+            action={
+              isEditMode && (
+                <Chip 
+                  label={formik.values.status.toUpperCase()} 
+                  color={
+                    formik.values.status === 'approved' ? 'success' : 
+                    formik.values.status === 'rejected' ? 'error' : 'warning'
+                  } 
+                  size="small"
+                  sx={{ textTransform: 'uppercase', fontWeight: 'bold' }}
+                  icon={
+                    formik.values.status === 'approved' ? <CheckCircleIcon /> :
+                    formik.values.status === 'rejected' ? <CancelIcon /> : <PendingActionsIcon />
+                  }
+                />
+              )
+            }
+          />
+          <Divider />
+          <CardContent>
+            <Grid container spacing={3}>
+              {/* Project Selection */}
+              <Grid item xs={12} md={6}>
+                <FormControl 
+                  fullWidth 
+                  error={formik.touched.projectId && Boolean(formik.errors.projectId)}
+                >
+                  <InputLabel>Project *</InputLabel>
+                  <Select
+                    name="projectId"
+                    value={formik.values.projectId}
+                    onChange={formik.handleChange}
+                    onBlur={formik.handleBlur}
+                    label="Project *"
+                    disabled={isSubmitting}
+                  >
+                    {projects.map((project: Project) => (
+                      <MenuItem key={project.id} value={project.id}>
+                        {project.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  {formik.touched.projectId && formik.errors.projectId && (
+                    <FormHelperText error>{formik.errors.projectId}</FormHelperText>
+                  )}
+                </FormControl>
+              </Grid>
+
+              {/* Date */}
+              <Grid item xs={12} md={6}>
+                <DatePicker
+                  label="Date *"
+                  value={formik.values.date}
+                  onChange={(date) => formik.setFieldValue('date', date)}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      fullWidth
+                      error={formik.touched.date && Boolean(formik.errors.date)}
+                      helperText={formik.touched.date && formik.errors.date}
+                      onBlur={formik.handleBlur}
+                      name="date"
+                    />
+                  )}
+                />
+              </Grid>
+
+              {/* Description */}
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Description *"
+                  name="description"
+                  value={formik.values.description}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
+                  error={formik.touched.description && Boolean(formik.errors.description)}
+                  helperText={formik.touched.description && formik.errors.description}
+                  disabled={isSubmitting}
+                  multiline
+                  rows={3}
+                />
+              </Grid>
+
+              {/* Amount */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Amount *"
+                  name="amount"
+                  type="number"
+                  value={formik.values.amount}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
+                  error={formik.touched.amount && Boolean(formik.errors.amount)}
+                  helperText={formik.touched.amount && formik.errors.amount}
+                  disabled={isSubmitting}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">MWK</InputAdornment>
+                    ),
+                  }}
+                />
+              </Grid>
+
+              {/* Category */}
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth error={formik.touched.category && Boolean(formik.errors.category)}>
+                  <InputLabel>Category *</InputLabel>
+                  <Select
+                    name="category"
+                    value={formik.values.category}
+                    onChange={formik.handleChange}
+                    onBlur={formik.handleBlur}
+                    label="Category *"
+                    disabled={isSubmitting}
+                  >
+                    {categories.map((category) => (
+                      <MenuItem key={category.value} value={category.value}>
+                        {category.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  {formik.touched.category && formik.errors.category && (
+                    <FormHelperText error>{formik.errors.category}</FormHelperText>
+                  )}
+                </FormControl>
+              </Grid>
+
+              {/* Status (editable by admin only) */}
+              {isAdmin && (
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth error={formik.touched.status && Boolean(formik.errors.status)}>
+                    <InputLabel>Status *</InputLabel>
+                    <Select
+                      name="status"
+                      value={formik.values.status}
+                      onChange={formik.handleChange}
+                      onBlur={formik.handleBlur}
+                      label="Status *"
+                      disabled={isSubmitting}
+                    >
+                      <MenuItem value="pending">Pending</MenuItem>
+                      <MenuItem value="approved">Approved</MenuItem>
+                      <MenuItem value="rejected">Rejected</MenuItem>
+                    </Select>
+                    {formik.touched.status && formik.errors.status && (
+                      <FormHelperText error>{formik.errors.status}</FormHelperText>
+                    )}
+                  </FormControl>
+                </Grid>
+              )}
+
+              {/* Receipt URL */}
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Receipt URL (optional)"
+                  name="receiptUrl"
+                  value={formik.values.receiptUrl || ''}
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
+                  error={formik.touched.receiptUrl && Boolean(formik.errors.receiptUrl)}
+                  helperText={formik.touched.receiptUrl && formik.errors.receiptUrl}
+                  disabled={isSubmitting}
+                />
+              </Grid>
+
+              {/* Form Actions */}
+              <Grid item xs={12}>
+                <Box display="flex" justifyContent="flex-end" gap={2}>
+                  <Button 
+                    variant="outlined" 
+                    onClick={handleCancel}
+                    disabled={isSubmitting}
+                  >
+                    Cancel
+                  </Button>
+                  <Button 
+                    type="submit" 
+                    variant="contained"
+                    color="primary"
+                    disabled={isSubmitting || !formik.isValid}
+                    startIcon={isSubmitting ? <CircularProgress size={20} /> : null}
+                  >
+                    {isEditMode ? 'Update' : 'Create'} Expense
+                  </Button>
+                </Box>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+      </form>
+    </LocalizationProvider>
+  );
+};
+
+export default ExpenseForm;
